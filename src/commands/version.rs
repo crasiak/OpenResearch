@@ -11,6 +11,10 @@ use crate::error::Result;
 use crate::updates;
 
 pub async fn run(args: crate::VersionArgs) -> Result<()> {
+    if args.harness_policy {
+        println!("ORX_HARNESS_POLICY=1");
+        return Ok(());
+    }
     if args.dashboard_protocol {
         println!(
             "ORX_DASHBOARD_PROTOCOL={}",

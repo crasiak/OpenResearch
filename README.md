@@ -119,6 +119,26 @@ orx paper <arxiv-id-or-doi>
 
 Run `orx --help` or `orx <command> --help` for the complete interface.
 
+### Restricting managed harnesses
+
+A launcher that manages only certain coding-agent accounts can set an explicit
+harness allowlist before starting ORX:
+
+```sh
+ORX_ALLOWED_HARNESSES=claude-code orx up
+orx version --harness-policy # prints ORX_HARNESS_POLICY=1 on supporting builds
+```
+
+Use comma-separated exact IDs: `claude-code`, `codex`, `opencode`, `cursor`,
+`antigravity`. With the variable unset, normal discovery is unchanged. An empty,
+invalid or unknown entry disables all harnesses rather than falling back. The
+central registry applies the restriction to discovery and execution, including
+existing chats and background titles, starter prompts and compaction. Existing
+transcripts remain readable; their harness/account is never silently changed.
+This restricts harness admission, not models, provider endpoints or shell tools.
+Managed launchers should check the capability marker before relying on it;
+older binaries ignore the variable.
+
 ## Local by default
 
 OpenResearch runs on `127.0.0.1` with a local SQLite store. Creating a project
