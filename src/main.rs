@@ -790,6 +790,9 @@ pub struct VersionArgs {
     /// Print the dashboard protocol understood by this binary.
     #[arg(long, hide = true, conflicts_with_all = ["check", "json", "build_channel"])]
     pub dashboard_protocol: bool,
+    /// Report support for managed launchers' central harness allowlist.
+    #[arg(long, hide = true, conflicts_with_all = ["check", "json", "build_channel", "dashboard_protocol"])]
+    pub harness_policy: bool,
 }
 
 #[derive(Args, Debug)]

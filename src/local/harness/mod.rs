@@ -509,14 +509,35 @@ pub fn permission_id_for_mode(harness_id: &str, mode: PermissionMode) -> Option<
 
 /// The one registry. Every consumer — chat dispatch, detection sweep, the
 /// create-session allowlist, and the skill installer — iterates this.
+///
+/// Managed launchers can set `ORX_ALLOWED_HARNESSES` to a comma-separated list
+/// of exact registry ids. Filter here, not just in the picker: persisted chats,
+/// queued/recovered turns, titles, starters and compaction all dispatch through
+/// this registry too. Unset preserves normal discovery; empty, non-UTF-8 or
+/// unknown entries fail closed. This is harness admission, not a model/endpoint
+/// policy or a sandbox for commands a permitted harness can execute.
 pub fn registry() -> Vec<Box<dyn Harness>> {
-    vec![
+    let mut harnesses: Vec<Box<dyn Harness>> = vec![
         Box::new(claude::ClaudeCode),
         Box::new(codex::Codex),
         Box::new(opencode::OpenCode),
         Box::new(cursor::Cursor),
         Box::new(antigravity::Antigravity),
-    ]
+    ];
+    if let Some(policy) = std::env::var_os("ORX_ALLOWED_HARNESSES") {
+        let Some(policy) = policy.to_str() else {
+            return Vec::new();
+        };
+        let allowed: Vec<&str> = policy.split(',').map(str::trim).collect();
+        if allowed
+            .iter()
+            .any(|id| !harnesses.iter().any(|h| h.id() == *id))
+        {
+            return Vec::new();
+        }
+        harnesses.retain(|h| allowed.contains(&h.id()));
+    }
+    harnesses
 }
 
 /// A single self-contained request for [`Harness::one_shot`].
@@ -771,6 +792,70 @@ $ARGUMENTS
 mod tests {
     use super::options::{PlanActivation, REASONING_DEFAULT_ID};
     use super::*;
+
+    /// Exercise the actual registry/dispatch boundary in a fresh process, not
+    /// global environment mutation racing the other harness tests.
+    #[test]
+    fn managed_harness_allowlist_controls_registry_and_dispatch() {
+        for (policy, expected) in [
+            (None, "claude-code,codex,opencode,cursor,antigravity"),
+            (Some("claude-code"), "claude-code"),
+            (
+                Some(" codex, claude-code,claude-code "),
+                "claude-code,codex",
+            ),
+            (Some(""), ""),
+            (Some(" , "), ""),
+            (Some("claude-code,typo"), ""),
+            (Some("Claude-Code"), ""),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([
+                "--exact",
+                "local::harness::tests::managed_harness_allowlist_probe",
+                "--nocapture",
+            ]);
+            child.env("ORX_TEST_EXPECTED_HARNESSES", expected);
+            match policy {
+                Some(value) => child.env("ORX_ALLOWED_HARNESSES", value),
+                None => child.env_remove("ORX_ALLOWED_HARNESSES"),
+            };
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "policy {policy:?}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_harness_allowlist_probe() {
+        let Ok(expected) = std::env::var("ORX_TEST_EXPECTED_HARNESSES") else {
+            return;
+        };
+        let actual = registry()
+            .iter()
+            .map(|h| h.id())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(actual, expected);
+        for id in ["claude-code", "codex", "opencode", "cursor", "antigravity"] {
+            let allowed = expected.split(',').any(|entry| entry == id);
+            assert_eq!(is_chat_harness(id), allowed, "admission: {id}");
+            assert_eq!(chat_harness(id).is_some(), allowed, "dispatch: {id}");
+            // Denied discovery must return before probing a native binary.
+            if !allowed {
+                assert!(detect_harness(id).await.is_none(), "discovery: {id}");
+            }
+        }
+        if expected.is_empty() {
+            assert!(detect_harnesses().await.is_empty());
+            assert!(detect_harnesses_snapshot().await.is_empty());
+            assert!(detect_harnesses_each().collect::<Vec<_>>().await.is_empty());
+        }
+    }
 
     fn options_for(id: &str) -> HarnessOptions {
         registry()
